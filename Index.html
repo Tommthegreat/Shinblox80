@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Clean Game UI</title>
+
+<style>
+body{
+margin:0;
+overflow:hidden;
+font-family:sans-serif;
+}
+
+#home{
+position:fixed;
+width:100%;
+height:100%;
+background:#111;
+color:white;
+display:flex;
+flex-direction:column;
+justify-content:center;
+align-items:center;
+gap:10px;
+}
+
+button{
+padding:12px;
+width:200px;
+border:none;
+border-radius:5px;
+font-weight:bold;
+}
+
+canvas{
+display:none;
+touch-action:none;
+}
+
+#gameOver{
+position:fixed;
+width:100%;
+height:100%;
+background:rgba(0,0,0,0.8);
+color:white;
+display:none;
+flex-direction:column;
+justify-content:center;
+align-items:center;
+}
+
+/* 👤 USER */
+#userBox{
+margin-top:10px;
+background:rgba(255,255,255,0.1);
+padding:8px;
+border-radius:5px;
+width:220px;
+font-size:14px;
+text-align:center;
+}
+
+/* 🌍 LEADERBOARD */
+#lbBox{
+margin-top:10px;
+background:rgba(255,255,255,0.1);
+padding:8px;
+border-radius:5px;
+width:220px;
+font-size:14px;
+text-align:center;
+
+max-height:200px;
+overflow-y:auto;
+}
+
+#lbBox::-webkit-scrollbar{
+width:5px;
+}
+#lbBox::-webkit-scrollbar-thumb{
+background:purple;
+border-radius:10px;
+}
+</style>
+</head>
+
+<body>
+
+<!-- 🏠 HOME -->
+<div id="home">
+<h1>🎮 SELECT STAGE</h1>
+
+<button onclick="startGame('easy')">🟢 EASY</button>
+<button onclick="startGame('hard')">🔴 HARD</button>
+<button onclick="startGame('insane')">🟣 INSANE</button>
+
+<!-- 👤 STATUS (NO SCORE NOW) -->
+<div id="userBox">
+🏅 YOUR STATUS<br>
+<span id="userText"></span>
+</div>
+
+<!-- 🌍 LEADERBOARD -->
+<div id="lbBox">
+<h3>🌍 WEEKLY TOP 100</h3>
+<div id="homeLbList">Loading...</div>
+</div>
+
+</div>
+
+<!-- 🎮 GAME -->
+<canvas id="game"></canvas>
+
+<!-- 💀 GAME OVER -->
+<div id="gameOver">
+<h1>💀 GAME OVER</h1>
+<p id="scoreText"></p>
+<button onclick="location.reload()">Home</button>
+</div>
+
+<script type="module">
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+import {
+getFirestore,
+collection,
+doc,
+getDoc,
+setDoc,
+query,
+orderBy,
+limit,
+getDocs
+} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+/* 🔥 FIREBASE */
+const firebaseConfig = {
+  apiKey: "AIzaSyC1vL9SdAGu1eKQl3_Ki7OTJNtXHO3Gvc4",
+  authDomain: "mygame-59965.firebaseapp.com",
+  projectId: "mygame-59965",
+  storageBucket: "mygame-59965.firebasestorage.app",
+  messagingSenderId: "414841242848",
+  appId: "1:414841242848:web:f86bb3af237d3bd0defc85"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+/* 🆔 USER */
+let myUser = localStorage.getItem("myGameUser");
+
+if(!myUser){
+  myUser = String(Math.floor(100000 + Math.random()*90000000));
+  localStorage.setItem("myGameUser", myUser);
+}
+
+/* 📅 WEEK */
+function getWeekId(){
+  const now = new Date();
+  const start = new Date(now.getFullYear(),0,1);
+  const diff = now - start;
+  const week = Math.floor(diff/(1000*60*60*24*7));
+  return now.getFullYear() + "-W" + week;
+}
+
+/* GAME */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+let score=0;
+let totalScore=0;
+let lives=3;
+let speed=2;
+let mode="easy";
+
+let box={x:canvas.width/2,y:canvas.height-80,w:80,h:20};
+let blocks=[];
+
+/* 🎮 START */
+window.startGame=function(m){
+
+mode=m;
+
+document.getElementById("home").style.display="none";
+canvas.style.display="block";
+
+score=0;
+lives=3;
+blocks=[];
+
+if(mode==="easy")speed=2;
+if(mode==="hard")speed=5;
+if(mode==="insane")speed=8;
+
+setInterval(()=>{
+blocks.push({
+x:Math.random()*canvas.width,
+y:-50,
+w:40,
+h:40,
+speed:speed
+});
+},700);
+
+loop();
+
+};
+
+/* TOUCH */
+canvas.addEventListener("touchmove",(e)=>{
+box.x=e.touches[0].clientX-box.w/2;
+});
+
+/* 💾 SAVE */
+async function saveScore(){
+
+const ref = doc(db,"leaderboard",myUser);
+const snap = await getDoc(ref);
+
+let old = 0;
+if(snap.exists()){
+old = snap.data().score || 0;
+}
+
+if(totalScore > old){
+await setDoc(ref,{
+id: myUser,
+score: totalScore,
+week: getWeekId(),
+time: Date.now()
+});
+}
+
+}
+
+/* 💀 GAME OVER */
+async function endGame(){
+
+document.getElementById("gameOver").style.display="flex";
+document.getElementById("scoreText").innerText="SCORE: "+score;
+canvas.style.display="none";
+
+if(mode==="insane"){
+await saveScore();
+loadLeaderboard();
+showMyRank();
+}
+
+}
+
+/* 🌍 LEADERBOARD */
+async function loadLeaderboard(){
+
+const q=query(
+collection(db,"leaderboard"),
+orderBy("score","desc"),
+limit(100)
+);
+
+const snap=await getDocs(q);
+
+let html="";
+let rank=1;
+let seen=new Set();
+
+snap.forEach(d=>{
+let data=d.data();
+
+if(data.week===getWeekId()){
+
+if(seen.has(data.id)) return;
+seen.add(data.id);
+
+html+="🏆 #"+rank+" 👤 "+data.id+" : "+data.score+"<br>";
+rank++;
+}
+
+});
+
+document.getElementById("homeLbList").innerHTML=html;
+
+}
+
+/* 👤 STATUS (NO SCORE NOW) */
+async function showMyRank(){
+
+const q=query(
+collection(db,"leaderboard"),
+orderBy("score","desc"),
+limit(100)
+);
+
+const snap=await getDocs(q);
+
+let rank=1;
+let myRank="Unranked";
+let seen=new Set();
+
+snap.forEach(d=>{
+let data=d.data();
+
+if(data.week===getWeekId()){
+
+if(seen.has(data.id)) return;
+seen.add(data.id);
+
+if(data.id===myUser){
+myRank=rank;
+}
+
+rank++;
+}
+
+});
+
+document.getElementById("userText").innerText=
+"ID: "+myUser+" | Rank: #"+myRank;
+
+}
+
+/* LOAD */
+window.onload=function(){
+loadLeaderboard();
+showMyRank();
+};
+
+/* LOOP */
+function loop(){
+
+ctx.clearRect(0,0,canvas.width,canvas.height);
+
+ctx.fillStyle=mode==="easy"?"#4fc3f7":
+mode==="hard"?"#200000":"#2a003f";
+ctx.fillRect(0,0,canvas.width,canvas.height);
+
+/* HUD (ONLY SCORE + HEARTS) */
+ctx.font="20px Arial";
+ctx.fillStyle="white";
+
+ctx.fillText("Score: "+score,20,40);
+ctx.fillText("❤️".repeat(lives),20,70);
+
+/* BOX */
+ctx.save();
+ctx.shadowBlur=25;
+ctx.shadowColor="purple";
+
+let grad=ctx.createLinearGradient(box.x,box.y,box.x+box.w,box.y+box.h);
+grad.addColorStop(0,"#6a00ff");
+grad.addColorStop(1,"#ff00ff");
+
+ctx.fillStyle=grad;
+ctx.fillRect(box.x,box.y,box.w,box.h);
+
+ctx.restore();
+
+/* BLOCKS */
+for(let i=0;i<blocks.length;i++){
+
+let b=blocks[i];
+b.y+=b.speed;
+
+ctx.fillStyle="brown";
+ctx.fillRect(b.x,b.y,b.w,b.h);
+
+if(
+b.x<box.x+box.w &&
+b.x+b.w>box.x &&
+b.y<box.y+box.h &&
+b.y+b.h>box.y
+){
+score++;
+totalScore++;
+blocks.splice(i,1);
+i--;
+}
+
+if(b.y>canvas.height){
+blocks.splice(i,1);
+i--;
+lives--;
+
+if(lives<=0){
+endGame();
+return;
+}
+}
+
+}
+
+requestAnimationFrame(loop);
+}
+
+</script>
+
+</body>
+</html>
