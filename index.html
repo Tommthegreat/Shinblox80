@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>My Game</title>
+
+<style>
+body{margin:0;overflow:hidden;font-family:sans-serif;background:#000;}
+
+#loginScreen{
+position:fixed;width:100%;height:100%;
+background:#000;color:white;
+display:flex;flex-direction:column;
+justify-content:center;align-items:center;
+gap:20px;z-index:999;
+}
+
+#home{
+position:fixed;width:100%;height:100%;
+background:#111;color:white;
+display:none;flex-direction:column;
+justify-content:center;align-items:center;
+gap:10px;
+}
+
+canvas{
+width:100vw;height:100vh;
+display:block;touch-action:none;
+}
+
+#userBox{
+position:fixed;top:10px;right:10px;
+color:white;background:rgba(0,0,0,0.5);
+padding:8px 12px;border-radius:8px;
+font-size:14px;display:none;z-index:1000;
+}
+
+#settingsBtn{
+position:fixed;top:10px;left:10px;
+color:white;background:rgba(0,0,0,0.5);
+padding:8px 12px;border-radius:8px;
+font-size:14px;z-index:1000;display:none;
+cursor:pointer;
+}
+
+#settingsMenu{
+position:fixed;top:50px;left:10px;
+background:#222;color:white;
+padding:10px;border-radius:10px;
+display:none;flex-direction:column;
+gap:10px;z-index:2000;
+}
+
+#namePopup{
+position:fixed;width:100%;height:100%;
+background:rgba(0,0,0,0.9);
+display:none;justify-content:center;
+align-items:center;flex-direction:column;
+z-index:3000;color:white;gap:10px;
+}
+
+#nameError{color:red;}
+
+#leaderboard{
+background:#222;padding:10px;
+border-radius:10px;margin-top:10px;
+width:250px;max-height:250px;
+overflow-y:auto;
+}
+
+#lbTimer{
+font-size:12px;color:#aaa;
+margin-bottom:5px;
+}
+
+button{
+padding:15px;width:220px;
+border:none;border-radius:8px;
+font-weight:bold;font-size:16px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="userBox"></div>
+
+<div id="settingsBtn" onclick="toggleSettings()">⚙ Settings</div>
+
+<div id="settingsMenu">
+<button onclick="logout()">🚪 Logout</button>
+</div>
+
+<div id="namePopup">
+<h2>Enter Username</h2>
+<input id="nameInput" placeholder="Your name">
+<button onclick="saveName()">Continue</button>
+<p id="nameError"></p>
+</div>
+
+<div id="loginScreen">
+<h2>🎮 Welcome</h2>
+<button onclick="googleLogin()">🔵 Continue with Google</button>
+</div>
+
+<div id="home">
+
+<h1>🎮 SELECT STAGE</h1>
+<button onclick="startGame()">🟢 PLAY</button>
+
+<div id="leaderboard">
+<h3>🏆 Leaderboard</h3>
+<div id="lbTimer">Loading...</div>
+<div id="leaderList"></div>
+</div>
+
+</div>
+
+<canvas id="game"></canvas>
+
+<script type="module">
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+import {
+getAuth,
+signInWithPopup,
+GoogleAuthProvider,
+onAuthStateChanged,
+signOut
+} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
+
+import {
+getFirestore,
+doc,
+setDoc,
+getDoc,
+getDocs,
+collection,
+query,
+orderBy,
+limit,
+deleteDoc
+} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+/* FIREBASE */
+const firebaseConfig = {
+apiKey: "AIzaSyC1vL9SdAGu1eKQl3_Ki7OTJNtXHO3Gvc4",
+authDomain: "mygame-59965.firebaseapp.com",
+projectId: "mygame-59965",
+storageBucket: "mygame-59965.appspot.com",
+messagingSenderId: "414841242848",
+appId: "1:414841242848:web:f86bb3af237d3bd0defc85"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const provider = new GoogleAuthProvider();
+
+let uid=null;
+let username=null;
+
+/* GAME */
+let score=0;
+let lives=3;
+let interval=null;
+let box;
+let blocks=[];
+
+/* LOGIN */
+window.googleLogin = async ()=>{
+await signInWithPopup(auth, provider);
+};
+
+/* AUTH */
+onAuthStateChanged(auth,(user)=>{
+
+if(!user){
+document.getElementById("loginScreen").style.display="flex";
+document.getElementById("home").style.display="none";
+document.getElementById("settingsBtn").style.display="none";
+return;
+}
+
+uid=user.uid;
+
+document.getElementById("loginScreen").style.display="none";
+document.getElementById("settingsBtn").style.display="block";
+
+checkUsername();
+
+/* leaderboard refresh */
+loadLeaderboard();
+setInterval(loadLeaderboard,2000);
+setInterval(updateResetTimer,1000);
+});
+
+/* USERNAME */
+async function checkUsername(){
+
+let ref=doc(db,"users",uid);
+let snap=await getDoc(ref);
+
+if(snap.exists()){
+enterGame(snap.data().name);
+}else{
+document.getElementById("namePopup").style.display="flex";
+}
+}
+
+/* UNIQUE NAME */
+window.saveName = async function(){
+
+let name=document.getElementById("nameInput").value.trim();
+document.getElementById("nameError").innerText="";
+
+if(!name) return;
+
+let q=await getDocs(collection(db,"users"));
+let taken=false;
+
+q.forEach(d=>{
+if(d.data().name.toLowerCase()===name.toLowerCase()){
+taken=true;
+}
+});
+
+if(taken){
+document.getElementById("nameError").innerText="Username already taken!";
+return;
+}
+
+await setDoc(doc(db,"users",uid),{name:name});
+
+enterGame(name);
+};
+
+function enterGame(name){
+
+username=name;
+
+document.getElementById("namePopup").style.display="none";
+document.getElementById("home").style.display="flex";
+
+document.getElementById("userBox").style.display="block";
+document.getElementById("userBox").innerText="👤 "+name;
+}
+
+/* SETTINGS */
+window.toggleSettings=function(){
+let m=document.getElementById("settingsMenu");
+m.style.display=(m.style.display==="flex")?"none":"flex";
+};
+
+window.logout=async function(){
+await signOut(auth);
+location.reload();
+};
+
+/* CANVAS */
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+function resizeGame(){
+canvas.width=window.innerWidth;
+canvas.height=window.innerHeight;
+}
+
+window.addEventListener("resize",resizeGame);
+resizeGame();
+
+/* SAVE SCORE FIX */
+async function saveScore(finalScore){
+
+if(!uid || !username) return;
+
+await setDoc(doc(db,"scores",uid),{
+name:username,
+score:finalScore,
+time:Date.now()
+});
+}
+
+/* START GAME */
+window.startGame=function(){
+
+document.getElementById("home").style.display="none";
+canvas.style.display="block";
+
+score=0;
+lives=3;
+
+box={x:canvas.width/2,y:canvas.height-80,w:80,h:20};
+blocks=[];
+
+if(interval) clearInterval(interval);
+
+interval=setInterval(()=>{
+blocks.push({
+x:Math.random()*canvas.width,
+y:-50,
+w:40,
+h:40,
+speed:3
+});
+},700);
+
+loop();
+};
+
+/* LOOP */
+function loop(){
+
+ctx.clearRect(0,0,canvas.width,canvas.height);
+
+ctx.fillStyle="#111";
+ctx.fillRect(0,0,canvas.width,canvas.height);
+
+ctx.fillStyle="white";
+ctx.fillText("Score: "+score,20,40);
+
+/* player */
+ctx.fillStyle="purple";
+ctx.fillRect(box.x,box.y,box.w,box.h);
+
+for(let i=0;i<blocks.length;i++){
+
+let b=blocks[i];
+b.y+=b.speed;
+
+ctx.fillStyle="brown";
+ctx.fillRect(b.x,b.y,b.w,b.h);
+
+if(
+b.x<box.x+box.w &&
+b.x+b.w>box.x &&
+b.y<box.y+box.h &&
+b.y+b.h>box.y
+){
+score++;
+blocks.splice(i,1);
+i--;
+}
+
+if(b.y>canvas.height){
+blocks.splice(i,1);
+i--;
+lives--;
+
+if(lives<=0){
+
+saveScore(score); // 🔥 FIXED SCORE SAVE
+
+alert("Game Over Score: "+score);
+
+canvas.style.display="none";
+document.getElementById("home").style.display="flex";
+
+return;
+}
+}
+}
+
+requestAnimationFrame(loop);
+}
+
+/* TOUCH */
+canvas.addEventListener("touchmove",(e)=>{
+box.x=e.touches[0].clientX-box.w/2;
+});
+
+/* LEADERBOARD */
+async function loadLeaderboard(){
+
+let q=query(collection(db,"scores"),orderBy("score","desc"),limit(100));
+let snap=await getDocs(q);
+
+let html="";
+
+snap.forEach(d=>{
+let data=d.data();
+html+=`<div>${data.name} - ${data.score}</div>`;
+});
+
+document.getElementById("leaderList").innerHTML=html;
+}
+
+/* RESET */
+const RESET_TIME=345600000;
+
+function getResetTime(){
+let last=localStorage.getItem("lb_reset_time");
+if(!last){
+localStorage.setItem("lb_reset_time",Date.now());
+return Date.now()+RESET_TIME;
+}
+return parseInt(last)+RESET_TIME;
+}
+
+async function resetLeaderboard(){
+let snap=await getDocs(collection(db,"scores"));
+
+snap.forEach(async (d)=>{
+await deleteDoc(doc(db,"scores",d.id));
+});
+
+loadLeaderboard();
+}
+
+function updateResetTimer(){
+
+let now=Date.now();
+let end=getResetTime();
+
+let diff=end-now;
+
+if(diff<=0){
+resetLeaderboard();
+localStorage.setItem("lb_reset_time",Date.now());
+return;
+}
+
+let h=Math.floor(diff/(1000*60*60));
+let m=Math.floor((diff%(1000*60*60))/(1000*60));
+
+document.getElementById("lbTimer").innerText=`Reset in ${h}h ${m}m`;
+}
+
+</script>
+
+</body>
+</html>
